@@ -1,8 +1,16 @@
 from supabase import create_client
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+# Try to load the `Backend/.env` file (project keeps env under Backend/)
+# This ensures env vars are available even when running from the repo root.
+env_path = Path(__file__).resolve().parents[1] / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    # fallback: load from current working directory or environment
+    load_dotenv()
 
 URL = os.getenv("SUPABASE_URL")
 KEY = os.getenv("SUPABASE_KEY")
