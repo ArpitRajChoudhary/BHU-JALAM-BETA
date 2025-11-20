@@ -3,160 +3,181 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = "http://103.47.74.66:8000";
+  static const String baseUrl = "https://bhu-jalam-beta-production-c08e.up.railway.app";
 
-
-  // Helper: make GET request with Supabase headers
+  // Helper: make GET request
   static Future<http.Response> _get(String url) async {
     try {
       final response = await http.get(
         Uri.parse(url),
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': 'Bearer $supabaseKey',
-          'Content-Type': 'application/json',
-        },
+        headers: {'Content-Type': 'application/json'},
       ).timeout(const Duration(seconds: 15));
       return response;
     } on TimeoutException {
-      throw Exception("Request to $url timed out. Please try again.");
+      throw Exception("Request timed out. Please try again.");
     } catch (e) {
-      throw Exception("Failed request to $url: $e");
+      throw Exception("Failed request: $e");
     }
   }
 
-  // -------------------------------
-  // Districts & Blocks
-  // -------------------------------
-
   // Get all districts
   static Future<List<String>> getDistricts() async {
-    final response = await _get("$baseUrl/groundwater?select=district");
+    final response = await _get("$baseUrl/districts");
     if (response.statusCode == 200) {
       final List<dynamic> data = jsonDecode(response.body);
-      final Set<String> districts = {};
-      for (var item in data) {
-        if (item['district'] != null) {
-          districts.add(item['district'].toString());
-        }
-      }
-      return districts.toList()..sort();
+      return data.cast<String>();
     }
     throw Exception("Failed to load districts");
   }
 
   // Get all blocks for a district
   static Future<List<String>> getBlocks(String district) async {
-    final response = await _get("$baseUrl/groundwater?select=block&district=ilike.$district");
+    final response = await _get("$baseUrl/blocks?district=$district");
     if (response.statusCode == 200) {
       final List<dynamic> data = jsonDecode(response.body);
-      final Set<String> blocks = {};
-      for (var item in data) {
-        if (item['block'] != null) {
-          blocks.add(item['block'].toString());
-        }
-      }
-      return blocks.toList()..sort();
+      return data.cast<String>();
     }
-    throw Exception("Failed to load blocks for $district");
+    throw Exception("Failed to load blocks");
   }
 
   // Get district name if you only have block
   static Future<String?> getDistrictByBlock(String block) async {
-    final response = await _get("$baseUrl/groundwater?select=district&block=ilike.$block&limit=1");
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      if (data.isNotEmpty && data[0]['district'] != null) {
-        return data[0]['district'].toString();
+    try {
+      final response = await _get("$baseUrl/district-by-block?block=$block");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['district'];
       }
+    } catch (e) {
+      print("Error getting district: $e");
     }
     return null;
   }
 
   // Get all blocks with their district
   static Future<Map<String, String>> getAllBlocks() async {
-    final response = await _get("$baseUrl/groundwater?select=block,district");
+    final response = await _get("$baseUrl/blocks-all");
     if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      final Map<String, String> blockToDistrict = {};
-      for (var item in data) {
-        if (item['block'] != null && item['district'] != null) {
-          blockToDistrict[item['block'].toString()] = item['district'].toString();
-        }
-      }
-      return blockToDistrict;
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      return data.cast<String, String>();
     }
     throw Exception("Failed to load all blocks");
   }
 
-  // -------------------------------
-  // Analytics / Metrics
-  // -------------------------------
-
-  // Get plot data (simplified - returns raw data instead of base64 plot)
-  static Future<List<Map<String, dynamic>>> getPlotData(String district, String block) async {
-    final response = await _get("$baseUrl/groundwater?select=datetime_ts,water_level&district=ilike.$district&block=ilike.$block&order=datetime_ts.desc&limit=10");
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      return data.cast<Map<String, dynamic>>();
+  // Get plot data (base64 image)
+  static Future<String?> getPlotData(String district, String block) async {
+    try {
+      final response = await _get("$baseUrl/plot-mean-levels?district=$district&block=$block&days=10");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['plot_base64'];
+      }
+    } catch (e) {
+      print("Error getting plot: $e");
     }
-    return [];
-  }
-
-  // Get plot of last 10 days mean levels (returns null since we need raw data now)
-  static Future<String?> getPlotMeanLevels(String district, String block) async {
-    // This method returned base64 plot from Railway backend
-    // Now we'll return null and handle plotting in Flutter
     return null;
   }
 
-  // Fetch all extra stats (simplified version)
+  // Fetch all extra stats
   static Future<Map<String, dynamic>> getExtras(String district, String block) async {
-    final response = await _get("$baseUrl/groundwater?select=*&district=ilike.$district&block=ilike.$block&order=datetime_ts.desc&limit=100");
+    final response = await _get("$baseUrl/extras?district=$district&block=$block");
     if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      if (data.isEmpty) return {};
-      
-      // Calculate basic stats from raw data
-      final latest = data.first;
-      final waterLevels = data.map((e) => e['water_level'] as double? ?? 0.0).toList();
-      final avgLevel = waterLevels.reduce((a, b) => a + b) / waterLevels.length;
-      
-      return {
-        'last_date': latest['datetime_ts'],
-        'latest_level': latest['water_level'],
-        'avg_level': avgLevel,
-        'rainfall': latest['rainfall_mm'] ?? 0,
-        'aquifer_type': latest['aquifer_type'] ?? 'Unknown',
-        'sustainability_score': _calculateScore(waterLevels),
-      };
+      return jsonDecode(response.body);
     }
     throw Exception("Failed to load extras");
   }
 
-  static double _calculateScore(List<double> levels) {
-    if (levels.isEmpty) return 0.0;
-    final avg = levels.reduce((a, b) => a + b) / levels.length;
-    return (avg / 10).clamp(0.0, 10.0); // Simple scoring
+  // Get daily fluctuation
+  static Future<Map<String, dynamic>?> getDailyFluctuation(String district, String block) async {
+    try {
+      final response = await _get("$baseUrl/fluctuations-daily?district=$district&block=$block");
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      print("Error getting fluctuation: $e");
+    }
+    return null;
   }
 
-  // Get daily fluctuation (simplified)
-  static Future<Map<String, dynamic>?> getDailyFluctuation(String district, String block) async {
-    final response = await _get("$baseUrl/groundwater?select=datetime_ts,water_level&district=ilike.$district&block=ilike.$block&order=datetime_ts.desc&limit=2");
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      if (data.length >= 2) {
-        final latest = data[0]['water_level'] as double? ?? 0.0;
-        final previous = data[1]['water_level'] as double? ?? 0.0;
-        final fluctuation = latest - previous;
-        
-        return {
-          'fluctuation': fluctuation,
-          'trend': fluctuation > 0 ? 'rising' : fluctuation < 0 ? 'falling' : 'stable',
-          'latest_level': latest,
-          'previous_level': previous,
-        };
+  // Get yield estimate
+  static Future<Map<String, dynamic>?> getYield(String district, String block, {int days = 30}) async {
+    try {
+      final response = await _get("$baseUrl/yield?district=$district&block=$block&days=$days");
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
       }
+    } catch (e) {
+      print("Error getting yield: $e");
+    }
+    return null;
+  }
+
+  // Get sustainability score
+  static Future<Map<String, dynamic>?> getScore(String district, String block) async {
+    try {
+      final response = await _get("$baseUrl/score?district=$district&block=$block");
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      print("Error getting score: $e");
+    }
+    return null;
+  }
+
+  // Get last recorded timestamp
+  static Future<String?> getLastRecorded(String district, String block) async {
+    try {
+      final response = await _get("$baseUrl/last-recorded?district=$district&block=$block");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['last_recorded'];
+      }
+    } catch (e) {
+      print("Error getting last recorded: $e");
+    }
+    return null;
+  }
+
+  // Get last water level
+  static Future<double?> getLastWaterLevel(String district, String block) async {
+    try {
+      final response = await _get("$baseUrl/last-water-level?district=$district&block=$block");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['last_water_level']?.toDouble();
+      }
+    } catch (e) {
+      print("Error getting water level: $e");
+    }
+    return null;
+  }
+
+  // Get rainfall
+  static Future<double?> getRainfall(String district, String block) async {
+    try {
+      final response = await _get("$baseUrl/rainfall?district=$district&block=$block");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['rainfall_mm']?.toDouble();
+      }
+    } catch (e) {
+      print("Error getting rainfall: $e");
+    }
+    return null;
+  }
+
+  // Get aquifer type
+  static Future<String?> getAquiferType(String district, String block) async {
+    try {
+      final response = await _get("$baseUrl/aquifer?district=$district&block=$block");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['aquifer_type'];
+      }
+    } catch (e) {
+      print("Error getting aquifer: $e");
     }
     return null;
   }
