@@ -35,7 +35,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     try {
       final extras = await ApiService.getExtras(widget.district, widget.block);
       final plot =
-      await ApiService.getPlotMeanLevels(widget.district, widget.block);
+      await ApiService.getPlotData(widget.district, widget.block);
 
       if (!mounted) return;
       setState(() {
